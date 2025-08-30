@@ -1,2 +1,0 @@
-Questo è un file di test per verificare la sincronizzazione tra il mio ambiente di lavoro e il repository su GitHub.
-Se vedi questo file, la connessione da parte mia funziona.
