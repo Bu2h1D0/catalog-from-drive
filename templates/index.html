@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}Catalogo Prodotti{% endblock %}
+
+{% block content %}
+    <h2>Il nostro Catalogo</h2>
+    {% if products %}
+        <div class="product-grid">
+            {% for product in products %}
+                <div class="product-card">
+                    <a href="{{ product.url }}">
+                        {% if product.images %}
+                            <img src="{{ product.images[0].thumbnailLink }}" alt="Immagine di {{ product.name }}">
+                        {% else %}
+                            <img src="/static/placeholder.png" alt="Nessuna immagine disponibile">
+                        {% endif %}
+                        <h3>{{ product.name }}</h3>
+                    </a>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p>Nessun prodotto trovato. Prova ad aggiungere delle cartelle di prodotto nel tuo Google Drive.</p>
+    {% endif %}
+{% endblock %}

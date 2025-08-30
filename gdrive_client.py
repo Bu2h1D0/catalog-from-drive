@@ -1,4 +1,5 @@
 import os.path
+import sys
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -7,59 +8,142 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 # If modifying these scopes, delete the file token.json.
-SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
+def list_subfolders(service, parent_folder_id):
+    """List all subfolders in a given parent folder."""
+    print("Ricerca delle sottocartelle (prodotti)...")
+    try:
+        query = f"'{parent_folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        results = service.files().list(q=query, spaces='drive', fields='files(id, name)', pageSize=100).execute()
+        return results.get('files', [])
+    except HttpError as error:
+        print(f"Si è verificato un errore durante la lettura delle sottocartelle: {error}")
+        return []
+
+from jinja2 import Environment, FileSystemLoader
+import re
+
+def list_images_in_folder(service, folder_id):
+    """List all image files in a given folder, fetching necessary links."""
+    try:
+        # Request thumbnailLink for previews and webViewLink for full-size images
+        query = f"'{folder_id}' in parents and (mimeType='image/jpeg' or mimeType='image/png' or mimeType='image/webp') and trashed = false"
+        results = service.files().list(
+            q=query,
+            spaces='drive',
+            fields='files(id, name, thumbnailLink, webViewLink)',
+            pageSize=100
+        ).execute()
+        return results.get('files', [])
+    except HttpError as error:
+        print(f"Si è verificato un errore durante la lettura delle immagini: {error}")
+        return []
+
+def generate_site(products_data):
+    """Generates the static HTML site from product data."""
+    print("\nInizio la generazione del sito web statico...")
+    # Setup Jinja2 environment
+    env = Environment(loader=FileSystemLoader('templates'))
+
+    # Create output directory if it doesn't exist
+    os.makedirs("docs/products", exist_ok=True)
+
+    # Render Index Page
+    index_template = env.get_template('index.html')
+    with open('docs/index.html', 'w', encoding='utf-8') as f:
+        f.write(index_template.render(products=products_data))
+    print("- Pagina `index.html` creata.")
+
+    # Render Product Pages
+    product_template = env.get_template('product.html')
+    for product in products_data:
+        with open(product['url'], 'w', encoding='utf-8') as f:
+            f.write(product_template.render(product=product))
+        print(f"- Pagina prodotto creata: {product['url']}")
+
+    print("\nGenerazione del sito completata con successo!")
+    print("Puoi trovare i file nella cartella 'docs'.")
+
+def slugify(text):
+    """Converts a string to a URL-friendly and ASCII-safe slug."""
+    text = text.lower().strip()
+    # Replace spaces and underscores with hyphens
+    text = re.sub(r'[\s_]+', '-', text)
+    # Remove any character that is not a standard ASCII letter, number, or hyphen
+    text = re.sub(r'[^a-z0-9-]', '', text)
+    # Remove leading/trailing hyphens that might have been created
+    text = text.strip('-')
+    return text
 
 def main():
-  """Shows basic usage of the Drive v3 API.
-  Prints the names and ids of the first 10 files the user has access to.
-  """
-  creds = None
-  # The file token.json stores the user's access and refresh tokens, and is
-  # created automatically when the authorization flow completes for the first
-  # time.
-  if os.path.exists("token.json"):
-    creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-  # If there are no (valid) credentials available, let the user log in.
-  if not creds or not creds.valid:
-    if creds and creds.expired and creds.refresh_token:
-      creds.refresh(Request())
-    else:
-      print("Tentativo di caricamento di credentials.json...")
-      flow = InstalledAppFlow.from_client_secrets_file(
-          "credentials.json", SCOPES
-      )
-      creds = flow.run_local_server(port=0)
-    # Save the credentials for the next run
-    with open("token.json", "w") as token:
-      token.write(creds.to_json())
+    """Main function to run the script."""
+    # --- Authentication ---
+    creds = None
+    if not os.path.exists("token.json"):
+        print("ERRORE: File 'token.json' non trovato. Esegui prima il flusso di autenticazione per generarlo.")
+        sys.exit(1)
 
-  try:
-    service = build("drive", "v3", credentials=creds)
+    try:
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    except Exception as e:
+        print(f"ERRORE: Impossibile caricare le credenziali da token.json: {e}")
+        sys.exit(1)
 
-    # Call the Drive v3 API
-    print("Connessione a Google Drive riuscita. Elenco dei primi 10 file:")
-    results = (
-        service.files()
-        .list(pageSize=10, fields="nextPageToken, files(id, name)")
-        .execute()
-    )
-    items = results.get("files", [])
+    if not creds or not creds.valid:
+        print("ERRORE: Credenziali in token.json non valide o scadute. Rimuovi 'token.json' e riesegui per autenticarti di nuovo.")
+        sys.exit(1)
 
-    if not items:
-      print("Nessun file trovato.")
-      return
+    print("Autenticazione riuscita tramite token.json.")
 
-    for item in items:
-      print(f"{item['name']} ({item['id']})")
+    # --- Main Logic ---
+    if len(sys.argv) < 2:
+        print("\nERRORE: Manca l'ID della cartella principale.")
+        print(f"Uso: python3 {sys.argv[0]} <ID_CARTELLA_PRODOTTI>")
+        sys.exit(1)
 
-  except HttpError as error:
-    # TODO(developer) - Handle errors from drive API.
-    print(f"An error occurred: {error}")
-  except FileNotFoundError:
-    print("\nERRORE: File 'credentials.json' non trovato!")
-    print("Per favore, assicurati di aver scaricato il file delle credenziali e di averlo salvato come 'credentials.json' nella stessa directory di questo script.")
+    parent_folder_id = sys.argv[1]
+    print(f"Utilizzo l'ID della cartella principale: {parent_folder_id}")
 
+    try:
+        service = build("drive", "v3", credentials=creds)
+        product_folders = list_subfolders(service, parent_folder_id)
+
+        if not product_folders:
+            print(f"Nessuna sottocartella (prodotto) trovata nell'ID cartella fornito.")
+            return
+
+        print(f"Trovati {len(product_folders)} prodotti. Raccolta dati in corso...")
+
+        products_data = []
+        for folder in product_folders:
+            images = list_images_in_folder(service, folder['id'])
+            # Ensure images have webViewLink, some Drive files might not
+            for img in images:
+                if 'webViewLink' in img:
+                    # The default webViewLink is a viewer, not a direct image link.
+                    # We need to transform it to get a direct download link for embedding.
+                    img['webViewLink'] = img['webViewLink'].replace('/view?usp=drivesdk', '/preview')
+
+            slug = slugify(folder['name'])
+            products_data.append({
+                'id': folder['id'],
+                'name': folder['name'],
+                'images': images,
+                'url': f'docs/products/{slug}.html'
+            })
+
+        generate_site(products_data)
+
+    except HttpError as error:
+        if error.resp.status == 404:
+            print(f"\nERRORE 404: Impossibile trovare una cartella con l'ID fornito: '{parent_folder_id}'.")
+            print("Verifica che l'ID sia corretto e di avere i permessi per visualizzare la cartella.")
+        else:
+            print(f"Si è verificato un errore durante l'interazione con l'API di Drive: {error}")
+    except FileNotFoundError:
+        print("\nERRORE: File 'credentials.json' non trovato!")
+        print("Assicurati che il file sia presente nella stessa directory dello script.")
 
 if __name__ == "__main__":
-  main()
+    main()
